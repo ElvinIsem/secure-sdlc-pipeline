@@ -1,0 +1,85 @@
+# Reglas SAST propias (complementan los rulesets del registro de Semgrep).
+# Cada regla apunta a una vulnerabilidad documentada en docs/findings-walkthrough.md
+rules:
+  - id: sqli-concatenacion
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Consulta SQL construida concatenando datos de la peticion (VULN-02).
+      Use consultas parametrizadas: db.query("... WHERE name = ?", [valor]).
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+    patterns:
+      - pattern-either:
+          - pattern: '"$SQL" + $REQ.query.$P'
+          - pattern: '"$SQL" + $REQ.body.$P'
+          - pattern: '"$SQL" + $REQ.params.$P'
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: (?i)^\W*(select|insert|update|delete)\s
+
+  - id: command-injection-exec
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      child_process.exec recibe una cadena con datos de la peticion (VULN-03).
+      Use execFile/spawn con lista de argumentos y valide la entrada.
+    metadata:
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+    pattern-either:
+      - pattern: exec("..." + $REQ.query.$P, ...)
+      - pattern: exec("..." + $REQ.body.$P, ...)
+      - pattern: $CP.exec("..." + $REQ.query.$P, ...)
+
+  - id: hash-debil-password
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      MD5/SHA1 no son aptos para contrasenas (VULN-04).
+      Use bcrypt, scrypt o Argon2 con sal.
+    metadata:
+      cwe: "CWE-327: Broken or Risky Cryptographic Algorithm"
+      owasp: "A02:2021 - Cryptographic Failures"
+    pattern-either:
+      - pattern: crypto.createHash("md5")
+      - pattern: crypto.createHash("sha1")
+
+  - id: merge-profundo-entrada-no-confiable
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Merge profundo del cuerpo de la peticion: permite contaminacion de prototipo
+      con claves como __proto__ (VULN-05). Copie solo los campos permitidos.
+    metadata:
+      cwe: "CWE-1321: Prototype Pollution"
+    pattern-either:
+      - pattern: _.merge($T, $REQ.body)
+      - pattern: _.defaultsDeep($T, $REQ.body)
+      - pattern: _.mergeWith($T, $REQ.body, ...)
+
+  - id: credencial-aws-hardcodeada
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Credencial de AWS escrita en el codigo (VULN-01).
+      Cargue secretos desde variables de entorno o un gestor de secretos.
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+    pattern-regex: \bAKIA[0-9A-Z]{16}\b
+
+  - id: secreto-hardcodeado-por-nombre
+    languages: [javascript]
+    severity: WARNING
+    message: Posible secreto hardcodeado; muevalo a variables de entorno.
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+    patterns:
+      - pattern: const $K = "$V";
+      - metavariable-regex:
+          metavariable: $K
+          regex: (?i).*(secret|password|passwd|token|api_?key|access_?key).*
+      - metavariable-regex:
+          metavariable: $V
+          regex: .{8,}

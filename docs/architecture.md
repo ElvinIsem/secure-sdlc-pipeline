@@ -10,13 +10,17 @@ flowchart TD
 
     B --> SAST[SAST · Semgrep]
     B --> SEC[Secrets · Gitleaks]
-    B --> SCA[SCA · Trivy + npm audit]
+    B --> SCA[SCA · OWASP Dependency-Check]
     B --> IAC[IaC · Checkov]
-    B --> SBOM[SBOM · Syft / CycloneDX]
+    B --> SBOM[SBOM · Syft / CycloneDX + SPDX]
 
-    SAST --> G{Quality gate}
-    SEC --> G
-    SCA --> G
+    SAST --> GATE{Security Gate<br/>policies/security-policy.yml}
+    SCA --> GATE
+    GATE -- dentro de umbrales --> BUILD[Build · imagen Docker]
+    GATE -- exit 1 --> BLOCK[Build bloqueado]
+    SBOM --> BUILD
+
+    SEC --> G{Report-only checks}
     IAC --> G
 
     B --> RUN[Build & run app in Docker]

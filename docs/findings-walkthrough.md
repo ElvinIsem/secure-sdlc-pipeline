@@ -45,7 +45,7 @@ and how you'd fix it.
 ## VULN-05 · Prototype pollution (CWE-1321)
 
 - **Where:** `app/src/server.js` `POST /merge` — `_.merge(target, req.body)`.
-- **Caught by:** Semgrep (SAST) + Trivy/SCA (the lodash version).
+- **Caught by:** Semgrep (SAST) + Dependency-Check/SCA (the lodash version).
 - **Why:** attacker-controlled keys like `__proto__` can pollute `Object.prototype`
   and change app behavior globally.
 - **Fix:** upgrade lodash; avoid deep-merging untrusted input; use `Object.create(null)`
@@ -54,7 +54,7 @@ and how you'd fix it.
 ## VULN-06 · Vulnerable dependencies (CWE-1035)
 
 - **Where:** `app/package.json` — `lodash@4.17.11`, `express@4.17.1`.
-- **Caught by:** Trivy + `npm audit` (SCA); also surfaced in the SBOM.
+- **Caught by:** OWASP Dependency-Check (SCA: NVD CPE matching + npm audit analyzer); also surfaced in the SBOM.
 - **Why:** known-vulnerable versions ship exploitable CVEs (e.g. lodash prototype
   pollution CVE-2019-10744).
 - **Fix:** upgrade to patched versions; automate with Dependabot/Renovate; track
@@ -64,7 +64,8 @@ and how you'd fix it.
 
 ## Turning detection into a gate
 
-By default these findings are **reported, not blocking** (see
-[`../policies/README.md`](../policies/README.md)). To make any of them fail the
-build, remove `continue-on-error` on that job (GitHub) / `allow_failure` (GitLab)
-and set the tool's severity/exit-code threshold.
+SAST and SCA findings now go through the **Security Gate**
+([`../policies/security-policy.yml`](../policies/security-policy.yml)): any
+CRITICAL/HIGH finding fails the pipeline and the `build` job is skipped. The
+fixes for VULN-01…06 live on the `remediacion` branch, whose pipeline passes the
+gate. Secrets, IaC and DAST remain report-only.

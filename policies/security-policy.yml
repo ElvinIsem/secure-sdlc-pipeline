@@ -1,0 +1,39 @@
+# Politica de fallo del build por severidad
+# ------------------------------------------------------------------
+# La aplica scripts/security_gate.py en el job "security-gate" del pipeline.
+# Lee los reportes JSON de Semgrep (SAST) y OWASP Dependency-Check (SCA) y
+# termina con exit 1 (BUILD BLOQUEADO) si algun conteo supera su maximo.
+# Severidades normalizadas: CRITICAL > HIGH > MEDIUM > LOW > INFO
+# Un maximo de -1 significa "sin limite" (solo se reporta).
+
+sast:                       # Semgrep
+  # Semgrep usa ERROR / WARNING / INFO; se traducen asi:
+  severity_map:
+    ERROR: HIGH
+    WARNING: MEDIUM
+    INFO: LOW
+  max_allowed:
+    CRITICAL: 0
+    HIGH: 0
+    MEDIUM: 5
+    LOW: -1
+
+sca:                        # OWASP Dependency-Check
+  # Cada CVE se clasifica por su puntaje CVSS (v4, si no v3, si no v2)
+  cvss_bands:
+    CRITICAL: 9.0
+    HIGH: 7.0
+    MEDIUM: 4.0
+    LOW: 0.1
+  max_allowed:
+    CRITICAL: 0
+    HIGH: 0
+    MEDIUM: -1
+    LOW: -1
+
+# Riesgo aceptado formalmente. Se identifica por CVE o por id de regla de Semgrep.
+# Al pasar la fecha "expires" la excepcion deja de valer y vuelve a bloquear.
+exceptions: []
+#  - id: CVE-2024-00000
+#    reason: "La funcion vulnerable no se usa; ticket SEC-123"
+#    expires: 2026-12-31

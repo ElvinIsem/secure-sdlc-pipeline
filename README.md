@@ -8,6 +8,14 @@
 
 ---
 
+> 🧪 **Laboratorio (UMG – Seguridad Informática):** este fork implementa
+> *pipeline de SAST + SCA con Semgrep y Dependency-Check, generación de SBOM y
+> política de fallo del build por severidad*. Ver
+> [`docs/laboratorio.md`](docs/laboratorio.md) para los cambios, la política y
+> cómo reproducir la demostración (rama `main` bloqueada ↔ rama `remediacion` aprobada).
+
+---
+
 ## What this project demonstrates
 
 A complete **secure SDLC** implemented as code — the stages, their order, the
@@ -17,10 +25,10 @@ build). Each control category maps to a widely-used open-source or free tool:
 | Stage | Control | Tool(s) |
 |---|---|---|
 | **SAST** | Static application security testing | Semgrep |
-| **SCA** | Software composition / dependency analysis | Trivy (fs) + `npm audit` |
+| **SCA** | Software composition / dependency analysis | OWASP Dependency-Check (NVD + npm audit + RetireJS) |
 | **Secrets** | Hardcoded credential detection | Gitleaks |
 | **IaC** | Infrastructure-as-code misconfiguration | Checkov + Trivy (config) |
-| **SBOM** | Software bill of materials (CycloneDX) | Syft |
+| **SBOM** | Software bill of materials (CycloneDX + SPDX) | Syft |
 | **DAST** | Dynamic testing of the running app | OWASP ZAP (baseline) |
 
 The **same pipeline** is expressed twice to prove platform portability:
@@ -45,10 +53,13 @@ diagram (Mermaid).
       │
       ├── SAST        (Semgrep)              ─┐
       ├── Secrets     (Gitleaks)             │
-      ├── SCA         (Trivy fs + npm audit) ├─►  findings → SARIF / reports
+      ├── SCA         (Dependency-Check)     ├─►  findings → SARIF / reports
       ├── IaC         (Checkov + Trivy)      │        │
-      ├── SBOM        (Syft, CycloneDX)      ─┘        ▼
-      │                                          quality gate
+      ├── SBOM        (Syft, CycloneDX/SPDX) ─┘        ▼
+      │                          Security Gate (policies/security-policy.yml)
+      │                                    │ exit 1 → build bloqueado
+      │                                    ▼
+      │                          Build (imagen Docker)
       └── DAST        (OWASP ZAP baseline, app running in Docker)
 ```
 
@@ -84,7 +95,9 @@ docker compose up --build -d        # app on http://localhost:3000
 # 2. Run individual scanners locally (examples)
 semgrep scan --config auto app/                     # SAST
 gitleaks detect --source . -c policies/gitleaks.toml # secrets
-trivy fs app/                                        # SCA
+docker run --rm -v "$PWD/app:/src" -v "$PWD/reports:/report" \
+  owasp/dependency-check:12.2.2 --scan /src --out /report \
+  --format JSON --format HTML --disableOssIndex --nvdApiKey "$NVD_API_KEY"  # SCA
 checkov -d .                                         # IaC
 syft dir:app -o cyclonedx-json > sbom.json           # SBOM
 
@@ -99,12 +112,11 @@ The CI pipeline runs all of the above automatically on every push and pull reque
 
 ## On the quality gate
 
-The scanning steps are wired with `continue-on-error: true` so the demo pipeline
-stays green while findings are still published (to the GitHub **Security** tab as
-SARIF, and as job artifacts). In a real gated pipeline you **remove that flag** on
-the controls you want to be blocking — that single change turns each stage into a
-hard gate that fails the build on a finding above threshold. Thresholds live in
-[`policies/`](policies/).
+**SAST and SCA are now blocking.** Their reports feed the `security-gate` job,
+which applies [`policies/security-policy.yml`](policies/security-policy.yml)
+(zero CRITICAL/HIGH by default) and exits 1 when a threshold is exceeded, so the
+`build` job never runs. Secrets, IaC and DAST remain in report mode
+(`continue-on-error: true`) as in the original reference pipeline.
 
 ---
 
