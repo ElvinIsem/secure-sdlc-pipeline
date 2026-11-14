@@ -89,17 +89,25 @@ jobs:
         # El analizador de Node de Dependency-Check necesita el lockfile.
         working-directory: app
         run: npm install --package-lock-only --ignore-scripts
-      - name: Cache de la base de datos del NVD
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restaurar cache de la base de datos del NVD
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/dc-data
           key: dc-data-${{ env.DC_VERSION }}-${{ github.run_id }}
           restore-keys: dc-data-${{ env.DC_VERSION }}-
       - name: Run Dependency-Check
+        id: dc
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           mkdir -p reports ~/dc-data
+          # Limites del NVD: sin API key ~5 peticiones / 30 s (responde 429 si se excede).
+          if [ -n "$NVD_API_KEY" ]; then
+            NVD_OPTS=(--nvdApiKey "$NVD_API_KEY" --nvdApiDelay 1000 --nvdMaxRetryCount 10)
+          else
+            echo "::warning::Sin secret NVD_API_KEY: descarga lenta del NVD (12 s entre peticiones)"
+            NVD_OPTS=(--nvdApiDelay 12000 --nvdMaxRetryCount 30)
+          fi
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE/app:/src" \
@@ -111,11 +119,17 @@ jobs:
             --out /report \
             --format JSON --format HTML --format SARIF \
             --disableOssIndex \
-            ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"}
+            "${NVD_OPTS[@]}"
           # Sin --failOnCVSS: el umbral lo aplica el Security Gate (politica unica).
           # --disableOssIndex: Sonatype OSS Index ahora exige credenciales.
+      - name: Guardar cache de la base de datos del NVD
+        if: steps.dc.outcome == 'success'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/dc-data
+          key: dc-data-${{ env.DC_VERSION }}-${{ github.run_id }}
       - uses: github/codeql-action/upload-sarif@e58424170fb0262c8d7ed60a2e84b9bffe205c67 # v4 (codeql-bundle-v2.26.1)
-        if: always()
+        if: always() && hashFiles('reports/dependency-check-report.sarif') != ''
         with:
           sarif_file: reports/dependency-check-report.sarif
           category: dependency-check
