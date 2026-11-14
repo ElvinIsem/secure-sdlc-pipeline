@@ -1,62 +1,76 @@
 'use strict';
 
 /*
- * INTENTIONALLY VULNERABLE demo application.
- * -----------------------------------------------------------------------------
- * This service exists ONLY to give the security scanners in the CI pipeline
- * something real to detect. Every planted issue is tagged `// [VULN-xx]` and
- * documented in ../../docs/findings-walkthrough.md (with CWE / OWASP mapping
- * and the fix). DO NOT DEPLOY THIS.
+ * Version REMEDIADA de la app de demostracion (rama `remediacion`).
+ * Cada correccion referencia la vulnerabilidad original [VULN-xx] documentada
+ * en ../../docs/findings-walkthrough.md.
  */
 
 const express = require('express');
-const { exec } = require('child_process');
 const crypto = require('crypto');
-const _ = require('lodash');
+const dns = require('dns').promises;
 const { getUserByName } = require('./db');
 
 const app = express();
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(express.json({ limit: '10kb' }));
 
-// [VULN-01] Hardcoded credential (CWE-798). AWS's official *example* key — a
-// documented placeholder, not a real secret — so Gitleaks flags the pattern
-// without exposing any live credential.
-const AWS_ACCESS_KEY_ID = 'AKIAIOSFODNN7EXAMPLE';
-const AWS_SECRET_ACCESS_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+// [FIX-01] Sin credenciales en el codigo: se leen del entorno / gestor de secretos.
+const AWS_CONFIG = {
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+};
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-// [VULN-02] SQL injection (CWE-89): user input concatenated straight into a query.
+// [FIX-02] Consulta parametrizada: el valor viaja separado del texto SQL.
 app.get('/users', (req, res) => {
-  const query = "SELECT * FROM users WHERE name = '" + req.query.name + "'";
-  getUserByName(query, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  const name = String(req.query.name || '');
+  getUserByName('SELECT * FROM users WHERE name = ?', [name], (err, rows) => {
+    if (err) return res.status(500).json({ error: 'internal error' });
     res.json(rows);
   });
 });
 
-// [VULN-03] OS command injection (CWE-78): user input passed to a shell.
-app.get('/ping', (req, res) => {
-  exec('ping -c 1 ' + req.query.host, (err, stdout) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.type('text/plain').send(stdout);
+// [FIX-03] Sin shell: se valida el host con una allowlist y se resuelve con DNS
+// en lugar de ejecutar `ping` en el sistema operativo.
+const HOST_RE = /^(?=.{1,253}$)[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+app.get('/ping', async (req, res) => {
+  const host = String(req.query.host || '');
+  if (!HOST_RE.test(host)) return res.status(400).json({ error: 'invalid host' });
+  try {
+    const { address } = await dns.lookup(host);
+    res.json({ host, reachable: true, address });
+  } catch (_e) {
+    res.json({ host, reachable: false });
+  }
+});
+
+// [FIX-04] Derivacion de clave lenta y con sal (scrypt) en lugar de MD5.
+app.post('/register', (req, res) => {
+  const password = String(req.body.password || '');
+  const salt = crypto.randomBytes(16);
+  crypto.scrypt(password, salt, 64, (err, key) => {
+    if (err) return res.status(500).json({ error: 'internal error' });
+    res.json({
+      user: String(req.body.username || ''),
+      passwordHash: `scrypt$${salt.toString('hex')}$${key.toString('hex')}`,
+    });
   });
 });
 
-// [VULN-04] Weak hashing (CWE-327): MD5 for passwords, unsalted.
-app.post('/register', (req, res) => {
-  const hash = crypto.createHash('md5').update(req.body.password || '').digest('hex');
-  res.json({ user: req.body.username, passwordHash: hash });
-});
-
-// [VULN-05] Prototype pollution sink (CWE-1321) via vulnerable lodash.merge.
+// [FIX-05] Sin merge profundo de entrada no confiable: solo campos permitidos,
+// sobre un objeto sin prototipo. Ademas lodash se actualizo (FIX-06).
+const ALLOWED_FIELDS = ['displayName', 'theme', 'language'];
 app.post('/merge', (req, res) => {
-  const target = {};
-  _.merge(target, req.body);
-  res.json(target);
+  const target = Object.create(null);
+  for (const field of ALLOWED_FIELDS) {
+    if (typeof req.body[field] === 'string') target[field] = req.body[field];
+  }
+  res.json({ ...target });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`vulnerable demo app listening on :${PORT}`));
+app.listen(PORT, () => console.log(`demo app listening on :${PORT}`));
 
-module.exports = app;
+module.exports = { app, AWS_CONFIG };
